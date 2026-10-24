@@ -1,0 +1,11 @@
+# 运行产物
+*.log
+backups/
+.dsh-update-backups/
+
+# 编辑器 / 系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
