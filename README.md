@@ -60,6 +60,13 @@
 `-WithinRanges` 时不加 `--latest`，只在 `package.json` 声明的 semver 范围内取最高版本
 （注意：`^0.26.0` 这类 0.x 范围不会升到 0.27/0.28，此时默认策略才能升上去）。
 
+**非注册表依赖**（`link:` / `file:` / `workspace:` / `github:` / `git+` / 压缩包 URL）不参与
+`pnpm update`，会在计划里单独列出并注明类型：
+
+- `github:` 依赖会检查远端默认分支，若固定的 commit 已落后，打印升级命令：
+  `dsh plugin --profile <名字> add github:<owner>/<repo>`（dsh 会先做插件兼容性校验）；
+- `link:` 目录默认只提示，加 `-UpdateLinked` 才会执行 `git pull --ff-only`。
+
 ## 参数
 
 | 参数 | 说明 |
@@ -71,7 +78,7 @@
 | `-Yes` | 不交互确认（定时任务用） |
 | `-Force` | 检测到 DSH 正在运行也继续（不推荐，本体更新通常仍会失败） |
 | `-SkipIfRunning` | 检测到 DSH 在运行时安静跳过并返回 0（定时任务用） |
-| `-UpdateLinked` | 对 `link:` 的本地插件目录执行 `git pull --ff-only`（默认跳过） |
+| `-UpdateLinked` | 对 `link:` 的本地插件目录执行 `git pull --ff-only`（默认跳过；其它非注册表依赖不受影响） |
 | `-NoBackup` | 跳过更新前备份（不推荐，等于放弃 `-Rollback`） |
 | `-Rollback` | 回滚模式；`-RollbackId 20261023-213045` 可指定某次备份，默认最近一次 |
 
@@ -124,9 +131,22 @@ $DSH_HOME\.dsh-update-backups\<时间戳>\
 pnpm 11 默认拦截依赖的构建脚本。把提示里的包名加到 profile 的 `pnpm-workspace.yaml`
 `allowBuilds`（值为 `true`）后重跑。
 
-**本地 `link:` 插件（自己开发、用 `link:` 引入的插件）没被更新**
-`link:` 是本地开发目录，npm/pnpm 不会动它。默认只在清单里提示；加 `-UpdateLinked` 会执行
-`git pull --ff-only`（有本地改动或分叉时安全失败，需手动处理）。
+**Windows 提示“未进行数字签名，无法运行此脚本”**
+从网络下载或复制来的文件带 `Zone.Identifier`（Internet 标记），而系统执行策略通常是
+`RemoteSigned`，于是拒绝加载未签名的 `.ps1`。三种解决：
+
+1. 双击 `update-dsh.cmd` / `check-updates.cmd` —— 它们内部用 `-ExecutionPolicy Bypass`
+   运行，并在启动前自动对本目录执行 `Unblock-File`，不受影响（推荐）；
+2. 手动解除锁定：`Get-ChildItem . -Recurse | Unblock-File`；
+3. 临时运行：`pwsh -NoProfile -ExecutionPolicy Bypass -File .\Update-Dsh.ps1`。
+
+用 `git clone` 代替下载 ZIP 可以从源头避免这个问题。
+
+**非注册表依赖（`link:` / `github:` / `file:` 等）没被更新**
+npm/pnpm 只更新 registry 版本范围，这些依赖需要单独处理：`link:` 目录用 `-UpdateLinked`
+执行 `git pull --ff-only`（有本地改动或分叉时安全失败）；`github:` 固定 commit 落后时，
+按计划里打印的 `dsh plugin --profile <名字> add github:<owner>/<repo>` 升级（会解除 commit
+固定、跟随默认分支，dsh 会先做插件兼容性校验）；`file:` / `git+` / 压缩包 URL 只列出，不改动。
 
 **手动放进 `node_modules`、不在 `package.json` 里的目录会怎样**
 它不是 `package.json` 里声明的依赖，也不受 pnpm 管理，脚本不会删除或更新它。
@@ -157,8 +177,16 @@ schtasks /Create /TN "DSH-Update-Plugins" /SC DAILY /ST 12:00 ^
 ## 测试环境
 
 - Windows 11 + PowerShell 7.6 / Windows PowerShell 5.1
-- dsh `0.2.0-rc.2`、`0.2.1-rc.2`（npm 全局安装）+ pnpm 11
-- 已验证：正常升级、插件不兼容被 dsh 自动回滚、备份与回滚、`--dump-config` 校验
+- dsh `0.2.0-rc.2` ~ `0.2.1-rc.5`（npm 全局安装）+ pnpm 11
+- 已验证：正常升级、插件不兼容被 dsh 自动回滚、备份与回滚、`--dump-config` 校验、
+  非注册表依赖分类与 GitHub 依赖远端检查、包装脚本自动 `Unblock-File`
+
+## 更新日志
+
+- **1.1.0**：非注册表依赖（`link:`/`file:`/`workspace:`/`github:`/`git+`/URL）分类标注；
+  `github:` 依赖检查远端默认分支并在落后时打印升级命令；包装脚本启动时自动 `Unblock-File`，
+  解决下载文件被执行策略拦截的问题（.cmd 保持纯 ASCII）。
+- **1.0.0**：首次发布。本体+插件更新、兼容性回滚、备份、`-Rollback`、定时任务参数。
 
 ## 许可
 

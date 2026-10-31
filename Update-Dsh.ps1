@@ -11,6 +11,10 @@
     每次实际更新前，都会把 profile 的 package.json / pnpm-lock.yaml 等清单备份到
     $DSH_HOME\.dsh-update-backups\<时间戳>\，可用 -Rollback 恢复。
 
+    package.json 里的非注册表依赖不会被更新：link: 目录可用 -UpdateLinked 执行
+    `git pull --ff-only`；github: 依赖会检查远端默认分支，落后时打印升级命令；
+    file:/workspace:/git+ 等只在计划里列出。
+
 .PARAMETER Scope
     更新范围：All（默认，本体+插件）、Core（只更新本体）、Plugins（只更新插件）。
 
@@ -37,7 +41,7 @@
 
 .PARAMETER UpdateLinked
     对 package.json 里 `link:` 的本地插件目录执行 `git pull --ff-only`
-    （默认跳过，只在清单里提示）。
+    （默认跳过，只在清单里提示；其它非注册表依赖不受影响）。
 
 .PARAMETER NoBackup
     跳过更新前备份（不推荐；会同时失去 -Rollback 的能力）。
@@ -85,7 +89,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion = '1.0.0'
+$script:ScriptVersion = '1.1.0'
 $script:DshHome = $null
 $script:Log = New-Object System.Collections.ArrayList
 $script:Results = New-Object System.Collections.ArrayList
@@ -346,6 +350,39 @@ function Test-RegistrySpec {
     return ($s -match '^[\s\^~><=v]*\d')
 }
 
+function Get-DependencyKind {
+    param([string]$Spec)
+    if ([string]::IsNullOrWhiteSpace($Spec)) { return 'other' }
+    $s = $Spec.Trim()
+    if ($s -match '^link:') { return 'link' }
+    if ($s -match '^workspace:') { return 'workspace' }
+    if ($s -match '^(file|portal|patch):') { return 'file' }
+    if ($s -match '^github:') { return 'github' }
+    if ($s -match '^(git\+|gitlab:|bitbucket:)') { return 'git' }
+    if ($s -match '^https?://') { return 'tarball' }
+    if ($s -match '^npm:') { return 'alias' }
+    if ($s -match '^(\.|/|\\|[A-Za-z]:[\\/])') { return 'path' }
+    # npm/pnpm 还接受 GitHub 简写 owner/repo（可带 #ref）
+    if ($s -match '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#.+)?$') { return 'github' }
+    if (Test-RegistrySpec $s) { return 'registry' }
+    return 'other'
+}
+
+function Get-DependencyKindLabel {
+    param([string]$Kind)
+    switch ($Kind) {
+        'link' { return '本地 link: 目录' }
+        'workspace' { return 'workspace 依赖' }
+        'file' { return '本地文件依赖' }
+        'github' { return 'GitHub 依赖' }
+        'git' { return 'Git 依赖' }
+        'tarball' { return '压缩包 URL 依赖' }
+        'alias' { return 'npm: 别名依赖' }
+        'path' { return '本地路径依赖' }
+        default { return '非注册表依赖' }
+    }
+}
+
 function Get-InstalledVersion {
     param([string]$ProfileDir, [string]$PackageName)
     $rel = $PackageName.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
@@ -385,7 +422,7 @@ function New-ProfilePlan {
         Skipped   = $false
         Reason    = ''
         Registry  = @()
-        Linked    = @()
+        NonRegistry = @()
         OutdatedOk = $false
         AlwaysRun = $false
         Candidates = @()
@@ -405,21 +442,31 @@ function New-ProfilePlan {
 
     $deps = Get-ProfileDeps -ProfileDir $ProfileInfo.Dir
     $registryNames = New-Object System.Collections.ArrayList
-    $linkedList = New-Object System.Collections.ArrayList
+    $nonRegistry = New-Object System.Collections.ArrayList
     foreach ($name in $deps.Keys) {
         $dep = $deps[$name]
-        if (Test-RegistrySpec $dep.Spec) {
+        $kind = Get-DependencyKind -Spec $dep.Spec
+        if ($kind -eq 'registry') {
             [void]$registryNames.Add($name)
         } else {
-            [void]$linkedList.Add($dep)
+            [void]$nonRegistry.Add([pscustomobject]@{
+                    Name = $name
+                    Spec = $dep.Spec
+                    Kind = $kind
+                    Label = (Get-DependencyKindLabel -Kind $kind)
+                })
         }
     }
     $plan.Registry = $registryNames.ToArray()
-    $plan.Linked = $linkedList.ToArray()
+    $plan.NonRegistry = $nonRegistry.ToArray()
 
-    if ($plan.Registry.Count -eq 0) {
+    if ($plan.Registry.Count -eq 0 -and $plan.NonRegistry.Count -eq 0) {
         $plan.Skipped = $true
-        $plan.Reason = '没有注册表插件依赖'
+        $plan.Reason = '没有插件依赖'
+        return $plan
+    }
+    if ($plan.Registry.Count -eq 0) {
+        $plan.OutdatedOk = $true
         return $plan
     }
 
@@ -716,10 +763,9 @@ function Invoke-ProfilePluginUpdate {
             if ($null -eq $c.Target) { Add-Result -Item "$($Plan.Name) / $($c.Name)" -Before $c.Installed -Status $status -Note '版本未知' }
             else { Add-Result -Item "$($Plan.Name) / $($c.Name)" -Before $c.Installed -After $c.Target -Status $status }
         }
-        foreach ($l in $Plan.Linked) {
-            if (-not $UpdateLinked) {
-                Add-Result -Item "$($Plan.Name) / $($l.Name)" -Note "本地依赖（$($l.Spec)），不随注册表更新" -Status 'skip'
-            }
+        foreach ($l in $Plan.NonRegistry) {
+            if ($l.Kind -eq 'link' -and $UpdateLinked) { continue }
+            Add-Result -Item "$($Plan.Name) / $($l.Name)" -Note "$($l.Label)（$($l.Spec)），不随注册表更新" -Status 'skip'
         }
         return
     }
@@ -784,14 +830,85 @@ function Invoke-ProfilePluginUpdate {
     if ($changed -eq 0 -and $Plan.Candidates.Count -eq 0) {
         Write-Ok '插件均已是可选的最新版本。'
     }
-    foreach ($l in $Plan.Linked) {
-        if ($UpdateLinked) {
-            Write-Info "$($l.Name)：本地依赖（$($l.Spec)），稍后执行 git pull"
+    foreach ($l in $Plan.NonRegistry) {
+        if ($l.Kind -eq 'link' -and $UpdateLinked) {
+            Write-Info "$($l.Name)：$($l.Label)（$($l.Spec)），稍后执行 git pull"
         } else {
-            Write-Skip "$($l.Name)：本地依赖（$($l.Spec)），不随注册表更新"
-            Add-Result -Item "$($Plan.Name) / $($l.Name)" -Note "本地依赖（$($l.Spec)）" -Status 'skip'
+            Write-Skip "$($l.Name)：$($l.Label)（$($l.Spec)），不随注册表更新"
+            Add-Result -Item "$($Plan.Name) / $($l.Name)" -Note "$($l.Label)（$($l.Spec)）" -Status 'skip'
         }
     }
+}
+
+function Get-GitHubRemoteHead {
+    param([string]$Slug)
+    if ($null -eq $script:Git) { return $null }
+    $r = Invoke-Native -Exe $script:Git -Arguments @('ls-remote', "https://github.com/$Slug", 'HEAD') -Quiet -AllowFail
+    if ($r.ExitCode -ne 0) { return $null }
+    foreach ($line in $r.Output) {
+        $m = [regex]::Match(([string]$line).Trim(), '^([0-9a-f]{40})\s+HEAD$')
+        if ($m.Success) { return $m.Groups[1].Value }
+    }
+    return $null
+}
+
+function Write-GitHubDependencyHints {
+    param([object[]]$Plans)
+    $githubDeps = @()
+    foreach ($plan in $Plans) {
+        if ($plan.Skipped) { continue }
+        foreach ($dep in $plan.NonRegistry) {
+            if ($dep.Kind -eq 'github') { $githubDeps += [pscustomobject]@{ Plan = $plan; Dep = $dep } }
+        }
+    }
+    if ($githubDeps.Count -eq 0) { return }
+    Write-Line ''
+    Write-Line '  非注册表依赖（只检查远端，不自动修改）：'
+    if ($null -eq $script:Git) {
+        Write-Warn '未找到 git，跳过 GitHub 依赖的远端检查。'
+        return 0
+    }
+    $stale = 0
+    foreach ($item in $githubDeps) {
+        $plan = $item.Plan
+        $dep = $item.Dep
+        $prefix = "$($plan.Name) / $($dep.Name)"
+        $slug = [string]$dep.Spec -replace '^github:', ''
+        $ref = ''
+        $hashIndex = $slug.IndexOf('#')
+        if ($hashIndex -ge 0) {
+            $ref = $slug.Substring($hashIndex + 1).Trim()
+            $slug = $slug.Substring(0, $hashIndex)
+        }
+        $slug = $slug.Trim()
+        if ($slug -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+            Write-Info "$prefix：$($dep.Label)（$($dep.Spec)），无法解析 owner/repo，跳过远端检查"
+            continue
+        }
+        $head = Get-GitHubRemoteHead -Slug $slug
+        if ($null -eq $head) {
+            Write-Info "$prefix：无法读取 https://github.com/$slug 的远端信息（私有仓库/网络/认证限制）"
+            continue
+        }
+        $headShort = $head.Substring(0, 12)
+        if ($ref -match '^[0-9a-fA-F]{7,40}$') {
+            $pinned = $ref.ToLowerInvariant()
+            if ($head.StartsWith($pinned)) {
+                Write-Ok "$prefix：固定 commit $pinned 与远端 HEAD 一致"
+            } else {
+                $pinnedShort = $pinned.Substring(0, [Math]::Min(7, $pinned.Length))
+                Write-Warn "$prefix：固定 commit $pinnedShort 落后于远端 HEAD $headShort"
+                Write-Info "  如需升级（解除 commit 固定、跟随默认分支，dsh 会先做插件兼容性校验）："
+                Write-Info "  dsh plugin --profile $($plan.Name) add github:$slug"
+                $stale++
+            }
+        } elseif ($ref) {
+            Write-Info "$prefix：跟随远端 ref $ref（远端默认分支 HEAD $headShort）"
+        } else {
+            Write-Info "$prefix：未固定 ref，跟随默认分支（远端 HEAD $headShort）"
+        }
+    }
+    return $stale
 }
 
 function Invoke-LinkedUpdate {
@@ -801,45 +918,52 @@ function Invoke-LinkedUpdate {
         Write-Warn '未找到 git，跳过本地 link: 插件更新。'
         return
     }
-    Write-Step '更新本地 link: 插件（git pull --ff-only）'
+    $linkDeps = @()
     foreach ($plan in $Plans) {
-        foreach ($l in $plan.Linked) {
-            $spec = [string]$l.Spec
-            if (-not $spec.StartsWith('link:')) {
-                Write-Skip "$($plan.Name) / $($l.Name)：$spec 不是 link: 依赖，跳过"
-                continue
-            }
-            $rel = $spec.Substring(5)
-            $dir = $rel
-            if (-not [System.IO.Path]::IsPathRooted($rel)) { $dir = Join-Path $plan.Dir $rel }
-            if (-not (Test-Path -LiteralPath $dir)) {
-                Write-Warn "$($plan.Name) / $($l.Name)：目录不存在 -> $dir"
-                continue
-            }
-            if (-not (Test-Path -LiteralPath (Join-Path $dir '.git'))) {
-                Write-Skip "$($plan.Name) / $($l.Name)：不是 git 仓库，跳过"
-                continue
-            }
-            $headBefore = (Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'rev-parse', '--short', 'HEAD') -Quiet -AllowFail).Output
-            if ($DryRun) {
-                Write-Info "$($plan.Name) / $($l.Name)：将执行 git pull --ff-only（$dir）"
-                continue
-            }
-            $r = Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'pull', '--ff-only', '--no-rebase') -AllowFail
-            $headAfter = (Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'rev-parse', '--short', 'HEAD') -Quiet -AllowFail).Output
-            if ($r.ExitCode -eq 0) {
-                if (($headBefore -join '') -ne ($headAfter -join '')) {
-                    Write-Ok "$($l.Name)：$($headBefore -join '') -> $($headAfter -join '')"
-                    Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -Before ($headBefore -join '') -After ($headAfter -join '') -Status 'updated'
-                } else {
-                    Write-Ok "$($l.Name)：已是最新（$($headAfter -join '')）"
-                    Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -After ($headAfter -join '') -Status 'unchanged'
-                }
+        if ($plan.Skipped) { continue }
+        foreach ($l in $plan.NonRegistry) {
+            if ($l.Kind -eq 'link') { $linkDeps += [pscustomobject]@{ Plan = $plan; Dep = $l } }
+        }
+    }
+    if ($linkDeps.Count -eq 0) {
+        Write-Info '没有 link: 依赖，跳过本地插件更新。'
+        return
+    }
+    Write-Step '更新本地 link: 插件（git pull --ff-only）'
+    foreach ($item in $linkDeps) {
+        $plan = $item.Plan
+        $l = $item.Dep
+        $spec = [string]$l.Spec
+        $rel = $spec.Substring(5)
+        $dir = $rel
+        if (-not [System.IO.Path]::IsPathRooted($rel)) { $dir = Join-Path $plan.Dir $rel }
+        if (-not (Test-Path -LiteralPath $dir)) {
+            Write-Warn "$($plan.Name) / $($l.Name)：目录不存在 -> $dir"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $dir '.git'))) {
+            Write-Skip "$($plan.Name) / $($l.Name)：不是 git 仓库，跳过"
+            continue
+        }
+        $headBefore = (Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'rev-parse', '--short', 'HEAD') -Quiet -AllowFail).Output
+        if ($DryRun) {
+            Write-Info "$($plan.Name) / $($l.Name)：将执行 git pull --ff-only（$dir）"
+            continue
+        }
+        $r = Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'pull', '--ff-only', '--no-rebase') -AllowFail
+        $headAfter = (Invoke-Native -Exe $script:Git -Arguments @('-C', $dir, 'rev-parse', '--short', 'HEAD') -Quiet -AllowFail).Output
+        if ($r.ExitCode -eq 0) {
+            if (($headBefore -join '') -ne ($headAfter -join '')) {
+                Write-Ok "$($l.Name)：$($headBefore -join '') -> $($headAfter -join '')"
+                Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -Before ($headBefore -join '') -After ($headAfter -join '') -Status 'updated'
             } else {
-                Write-Fail "$($l.Name)：git pull 失败（exit $($r.ExitCode)），可能有本地改动或已分叉，请手动处理。"
-                Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -Status 'failed' -Note 'git pull 失败'
-                $script:Failures++
+                Write-Ok "$($l.Name)：已是最新（$($headAfter -join '')）"
+                Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -After ($headAfter -join '') -Status 'unchanged'
             }
+        } else {
+            Write-Fail "$($l.Name)：git pull 失败（exit $($r.ExitCode)），可能有本地改动或已分叉，请手动处理。"
+            Add-Result -Item "$($plan.Name) / $($l.Name)（git pull）" -Status 'failed' -Note 'git pull 失败'
+            $script:Failures++
         }
     }
 }
@@ -875,6 +999,8 @@ $script:Pnpm = Resolve-Executable 'pnpm'
 $script:Npm = Resolve-Executable 'npm'
 $script:Dsh = Resolve-Executable 'dsh'
 $script:Git = Resolve-Executable 'git'
+# 远端检查/拉取时不要卡在交互式凭据提示上；凭据助手与 SSH key 仍然可用。
+$env:GIT_TERMINAL_PROMPT = '0'
 
 Write-Line ''
 Write-Line "DeepSeek Harness 更新脚本 v$($script:ScriptVersion)" 'Cyan'
@@ -1007,20 +1133,39 @@ foreach ($plan in $plans) {
                 Write-Info "$($plan.Name) / $($c.Name)：$($c.Installed) -> $($c.Target)"
             }
         }
-    } elseif ($plan.OutdatedOk) {
+    } elseif ($plan.OutdatedOk -and $plan.Registry.Count -gt 0) {
         Write-Skip "$($plan.Name)：$($plan.Registry.Count) 个注册表插件均已是最新"
         Add-Result -Item $plan.Name -Status 'unchanged' -Note '插件均已最新'
     }
-    if ($plan.Linked.Count -gt 0) {
-        foreach ($l in $plan.Linked) {
-            if ($UpdateLinked) { Write-Info "$($plan.Name) / $($l.Name)：本地 link 包，将 git pull（$($l.Spec)）" }
-            else { Write-Info "$($plan.Name) / $($l.Name)：本地 link 包（$($l.Spec)），跳过" }
+    if ($plan.NonRegistry.Count -gt 0) {
+        foreach ($l in $plan.NonRegistry) {
+            if ($l.Kind -eq 'link' -and $UpdateLinked) {
+                Write-Info "$($plan.Name) / $($l.Name)：$($l.Label)（$($l.Spec)），将执行 git pull"
+            } else {
+                Write-Info "$($plan.Name) / $($l.Name)：$($l.Label)（$($l.Spec)），不随注册表更新"
+            }
         }
     }
 }
+$hasLinkWork = $false
+if ($UpdateLinked -and $Scope -ne 'Core') {
+    foreach ($plan in $plans) {
+        if ($plan.Skipped) { continue }
+        if (@($plan.NonRegistry | Where-Object { $_.Kind -eq 'link' }).Count -gt 0) { $hasLinkWork = $true; break }
+    }
+}
+if ($hasLinkWork) { $hasWork = $true }
+$githubStale = 0
+if ($Scope -ne 'Core' -and $plans.Count -gt 0) {
+    $githubStale = Write-GitHubDependencyHints -Plans $plans
+}
 if (-not $hasWork) {
     Write-Line ''
-    Write-Line '所有内容都已是最新，无需更新。' 'Green'
+    if ($githubStale -gt 0) {
+        Write-Line '本体与注册表插件都已是最新；上面列出的 GitHub 依赖需要手动改 spec 才能升级。' 'Yellow'
+    } else {
+        Write-Line '所有内容都已是最新，无需更新。' 'Green'
+    }
     if ($script:Results.Count -gt 0) {
         Write-Step '结果'
         foreach ($r in $script:Results) {
