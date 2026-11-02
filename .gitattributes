@@ -1,0 +1,2 @@
+# 跨平台：shell 脚本始终保持 LF，避免 Windows 检出成 CRLF 后 shebang 失效。
+*.sh text eol=lf

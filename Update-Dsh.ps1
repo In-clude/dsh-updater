@@ -89,7 +89,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$script:ScriptVersion = '1.1.0'
+$script:ScriptVersion = '1.2.0'
 $script:DshHome = $null
 $script:Log = New-Object System.Collections.ArrayList
 $script:Results = New-Object System.Collections.ArrayList
