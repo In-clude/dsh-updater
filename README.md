@@ -22,6 +22,34 @@
 | `update-dsh.cmd` | Windows | 双击更新：交互确认后实际执行 |
 | `update-dsh.sh` | Linux | 主脚本（bash ≥ 4.4） |
 | `check-updates.sh` | Linux | 只预览：等价于 `update-dsh.sh --dry-run` |
+| `skills/upgrade-dsh/` | Windows | 可选的 DSH skill：由 agent 编排「预览 → 退出 DSH 后自动升级 → 重启验证」 |
+
+## DSH skill（可选）
+
+仓库附带一个 [DSH](https://github.com/deepseek-ai/deepseek-harness) skill（`skills/upgrade-dsh/`），
+让 agent 直接完成整条升级链路：预览可用版本 → 在用户完全退出 DSH 后通过 Windows 计划任务自动升级 → 重启后验证。
+
+1. 把 skill 复制到 DSH 的全局 skills 目录（Windows 默认 `%USERPROFILE%\.dsh\skills\upgrade-dsh`）：
+
+   ```powershell
+   $dest = Join-Path $env:USERPROFILE '.dsh\skills\upgrade-dsh'
+   New-Item -ItemType Directory -Force $dest | Out-Null
+   Copy-Item .\skills\upgrade-dsh\* $dest -Recurse -Force
+   ```
+
+2. 在 DSH 里说「升级 dsh」或调用 `/upgrade-dsh`。skill 会先跑 `-DryRun` 预览，再注册计划任务
+   `DSH-AutoUpdate-<时间戳>`：等所有 dsh 进程退出后自动执行 `Update-Dsh.ps1 -Scope All -Yes`，
+   并把日志与状态写到 `$DSH_HOME\.dsh-update-backups\logs\`；重启 DSH 后可用
+   `scripts\Get-DshUpdateStatus.ps1` 验证结果。
+
+skill 按 `-UpdaterRoot` → 环境变量 `DSH_UPDATER_HOME` → 仓库内相对位置 → 默认路径的顺序定位
+`Update-Dsh.ps1`。仓库不在默认路径时，复制 skill 后设置一次环境变量即可：
+
+```powershell
+setx DSH_UPDATER_HOME "D:\tools\dsh-updater"
+```
+
+> skill 的“退出后自动升级”依赖 Windows 任务计划程序，只支持 Windows；Linux 请直接用 `update-dsh.sh`。
 
 ## 前置条件
 
