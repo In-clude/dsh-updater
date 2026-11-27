@@ -390,7 +390,7 @@ Linux（crontab，每天 12:00）：
 
 - Windows 11 + PowerShell 7.6 / Windows PowerShell 5.1
 - Windows 11 + PowerShell 7.7.0（插件实测）：dsh `0.2.2-rc.5`，完成一次真实 `/update apply`
-  （`dsh-ego-browser` 0.15.2 → 0.15.3，exit 0，备份、自动重启与任务自注销均正常）；worker
+  （某个插件从 0.15.2 升到 0.15.3，exit 0，备份、自动重启与任务自注销均正常）；worker
   的成功/失败/超时分支、计划任务托管、子进程编码处理均单独验证过
 - Linux bash 版实机验证：Kali Linux 6.19（bash 5.3、node 24、pnpm 12、dsh `0.2.1-rc.5`
   npm 全局安装）——真实 `dsh --version`、`npm view`、`pnpm outdated --format json`、
