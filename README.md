@@ -3,15 +3,16 @@
 自动更新 **DeepSeek Harness（dsh 本体）** 和 **各 profile 的插件**，带版本预览、更新前备份、
 兼容性保护和一键回滚。
 
-跨平台，同一套功能两种入口：
+跨平台，同一套功能三种入口：
 
+- **DSH 插件**（推荐）：装进 DSH 后，输入框里 `/update` 即可检查与升级，升级完自动重启
 - **Windows**：PowerShell（`Update-Dsh.ps1` + 双击用 `.cmd` 包装）
 - **Linux**：原生 bash（`update-dsh.sh` + `check-updates.sh`），**不需要安装 PowerShell**
 
 > Cross-platform updater for the npm-installed
 > [DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh) core and its profile
 > plugins, with dry-run preview, backups, compatibility guards, and one-command rollback.
-> Windows uses PowerShell; Linux uses native bash.
+> Windows uses PowerShell; Linux uses native bash; the bundled DSH plugin adds `/update` inside the app.
 
 ## 文件
 
@@ -23,6 +24,63 @@
 | `update-dsh.sh` | Linux | 主脚本（bash ≥ 4.4） |
 | `check-updates.sh` | Linux | 只预览：等价于 `update-dsh.sh --dry-run` |
 | `skills/upgrade-dsh/` | Windows | 可选的 DSH skill：由 agent 编排「预览 → 退出 DSH 后自动升级 → 重启验证」 |
+| `plugin/` | Windows | DSH 插件：在 DSH 内用 `/update` 检查与升级（定时检查、退出后计划任务托管、自动重启） |
+
+## DSH 插件（推荐）
+
+`plugin/` 是一个 [DSH](https://github.com/deepseek-ai/deepseek-harness) 插件（bundle）。装进 profile 后，
+输入框里 `/update` 就能检查并升级——**不用开终端，也不用 agent**。
+
+### 安装
+
+1. 打开 DSH → 侧栏 **Plugins** → **Add plugin**
+2. 选择本仓库的 `plugin/` 目录
+3. 装好后在输入框输入 `/update` 验证
+
+插件以 `link:` 方式装进 profile，仓库里改了代码后重新加载插件即可生效。
+
+### 命令
+
+| 命令 | 说明 |
+|---|---|
+| `/update` | 检查本体与当前 profile 插件的新版本（结果缓存 10 分钟） |
+| `/update --refresh` | 强制重新检查 |
+| `/update status` | 检查结果 + 上次升级的状态/备份/日志 |
+| `/update apply` | 完整预览 → 排后台 worker → 倒计时退出 DSH → 升级 → 自动重启 |
+| `/update apply --no-quit` | 只排队，由你自己关闭 DSH |
+| `/update rollback [备份ID]` | 回滚插件（默认最近一次备份，不降级本体） |
+
+### 配置
+
+Plugins → 本插件 → 配置表单，改完即时生效：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `autoCheck` / `intervalHours` | 开 / 6 小时 | 启动后 20 秒首检，之后按间隔检查 |
+| `scope` / `profiles` | `All` / 空 | 升级范围；空表示由引擎自动发现 profile |
+| `autoQuit` / `quitDelaySeconds` | 开 / 5 秒 | apply 后是否自动退出 DSH、退出前倒计时 |
+| `autoRelaunch` / `relaunchArgs` | 开 / 空 | 升级后是否重启 DSH，以及附加参数 |
+| `waitTimeoutMinutes` | 120 | 等 DSH 退出的上限 |
+| `keepBackups` | 5 | 成功后保留的备份目录数 |
+
+### 工作方式
+
+升级的执行部分必须跑在 DSH 进程之外：DSH 在 Windows 上用 kill-on-close 的 Job Object 管理子进程，
+普通后台进程会随 DSH 退出被杀掉。所以插件注册一个**计划任务**来托管 worker：
+
+```
+/update apply → 完整预览 → 写 job.json → 计划任务启动 worker → 倒计时退出 DSH
+worker → 等 dsh 进程消失 → 运行 Update-Dsh.ps1 -Scope All -Yes → 重启 dsh → 写状态 → 注销任务
+```
+
+日志与状态都在 `$DSH_HOME\.dsh-update-backups\logs\`（`auto-update-<时间戳>.log`、
+`auto-update-latest.json`）；备份仍由 `Update-Dsh.ps1` 负责，位置与命令行用法一致。
+
+### 限制
+
+- **仅 Windows**（依赖计划任务）；Linux 请用 `update-dsh.sh`。
+- 升级时 DSH 会退出并自动重启，当前会话中断一次——这是替换运行中文件的物理前提。
+- 升级引擎默认取插件上一级的 `Update-Dsh.ps1`；把插件单独拷到别处时，用配置项 `updaterRoot` 指向引擎目录。
 
 ## DSH skill（可选）
 
@@ -53,13 +111,15 @@ setx DSH_UPDATER_HOME "D:\tools\dsh-updater"
 
 ## 前置条件
 
-两个平台都要求：
+两种脚本入口都要求：
 
 - dsh 是 **npm 全局安装** 的（`npm i -g @deepseek-ai/dsh`，可用 `dsh --version` 验证）
 - 有 `pnpm`（dsh 的插件管理依赖它；`pnpm --version`）
 - npm registry 可访问（国内可配置 `registry.npmmirror.com` 等镜像）
 
 Windows 额外要求：PowerShell 7（`pwsh`）或 Windows PowerShell 5.1。
+
+插件入口额外要求：dsh 以 profile 方式运行（Web / 桌面版默认即是），且为 Windows（计划任务）。
 
 Linux 额外要求：
 
@@ -324,10 +384,14 @@ Linux（crontab，每天 12:00）：
 - 兼容性保护来自 dsh 插件管理器；跨大版本的运行时行为变化仍需更新后人工确认。
 - Linux 版需要 bash ≥ 4.4 与 node；不能用 `dash` 等其它 shell 直接执行。
 - Linux 版按 Linux 语义实现（`ps`、路径、权限提示）；macOS 未专门适配。
+- 插件版（`plugin/`）仅支持 Windows，且升级时 DSH 会退出并自动重启一次。
 
 ## 测试环境
 
 - Windows 11 + PowerShell 7.6 / Windows PowerShell 5.1
+- Windows 11 + PowerShell 7.7.0（插件实测）：dsh `0.2.2-rc.5`，完成一次真实 `/update apply`
+  （`dsh-ego-browser` 0.15.2 → 0.15.3，exit 0，备份、自动重启与任务自注销均正常）；worker
+  的成功/失败/超时分支、计划任务托管、子进程编码处理均单独验证过
 - Linux bash 版实机验证：Kali Linux 6.19（bash 5.3、node 24、pnpm 12、dsh `0.2.1-rc.5`
   npm 全局安装）——真实 `dsh --version`、`npm view`、`pnpm outdated --format json`、
   `ps` 进程识别（npm 软链形式 `node .../dsh`）与无 `ps` 时的 `/proc` 回退、
@@ -345,6 +409,9 @@ Linux（crontab，每天 12:00）：
 
 ## 更新日志
 
+- **插件 0.1.0**：新增 DSH 插件 `plugin/`，在 DSH 内用 `/update` 检查与升级——定时检查与缓存、
+  `/update apply` 在退出 DSH 后由计划任务托管升级并自动重启、`/update status` 查看结果、
+  `/update rollback` 回滚插件。
 - **1.2.0**：新增 Linux 原生 bash 版 `update-dsh.sh` / `check-updates.sh`（功能与 Windows
   版对齐，参数为 GNU 风格长选项）；Windows 版逻辑不变，仅版本号对齐。
 - **1.1.0**：非注册表依赖（`link:`/`file:`/`workspace:`/`github:`/`git+`/URL）分类标注；
