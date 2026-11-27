@@ -128,7 +128,9 @@ Linux 额外要求：
 - `dsh` / `npm` / `pnpm` 在 `PATH` 里
 - `git` 可选：`github:` 依赖的远端检查与 `link:` 依赖的 `git pull` 需要
 
-## 怎么用
+## 脚本用法
+
+这一节讲命令行脚本（`Update-Dsh.ps1` / `update-dsh.sh` 与两个双击入口）的用法；在 DSH 里用 `/update` 的插件用法见上面的[「DSH 插件」](#dsh-插件推荐)一节。
 
 ### Windows
 
