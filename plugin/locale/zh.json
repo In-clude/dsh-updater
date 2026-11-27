@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH 更新检查",
+    "description": "定时比对 dsh 本体与当前 profile 插件的可用新版本，结果显示在 /update 中；只检查，不执行升级。"
+  }
+}

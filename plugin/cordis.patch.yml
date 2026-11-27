@@ -1,0 +1,10 @@
+- insert:
+    - id: dsh-updater
+      name: '@local/dsh-updater'
+      config:
+        autoCheck: true
+        intervalHours: 6
+        autoQuit: true
+        quitDelaySeconds: 5
+        scope: All
+        autoRelaunch: true

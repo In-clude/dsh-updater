@@ -1,0 +1,26 @@
+{
+  "name": "@local/dsh-updater",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "dsh 更新检查：轻量比对 dsh 本体与各 profile 插件的可用新版本，结果写入状态文件并在 /update 中展示",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "checker.js",
+    "cordis.patch.yml",
+    "locale",
+    "icon.svg",
+    "docs",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

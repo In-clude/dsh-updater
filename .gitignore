@@ -3,8 +3,8 @@
 backups/
 .dsh-update-backups/
 
-# 本地设计稿 / 笔记（不入库）
-docs/
+# 本地设计稿 / 笔记（仅仓库根，避免忽略插件内的 docs/）
+/docs/
 
 # 编辑器 / 系统文件
 .vscode/

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH update check",
+    "description": "Periodically compares the installed DeepSeek Harness and profile plugins with their latest published versions and reports them in /update. Checks only; it does not run the update."
+  }
+}
