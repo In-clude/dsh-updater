@@ -1,9 +1,22 @@
 {
-  "name": "@local/dsh-updater",
+  "name": "dsh-update-plugin",
   "version": "0.1.1",
-  "private": true,
   "type": "module",
-  "description": "dsh 更新检查：轻量比对 dsh 本体与各 profile 插件的可用新版本，结果写入状态文件并在 /update 中展示",
+  "description": "DSH 插件：在 DSH 内用 /update 检查并升级 dsh 本体与 profile 插件（Windows，计划任务托管，升级后自动退出与重启）",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "updater",
+    "update"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/In-clude/dsh-updater.git",
+    "directory": "plugin"
+  },
+  "homepage": "https://github.com/In-clude/dsh-updater#readme",
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",
@@ -12,12 +25,23 @@
   "files": [
     "index.js",
     "checker.js",
+    "worker.js",
+    "scheduler.js",
+    "output.js",
     "cordis.patch.yml",
+    "scripts",
     "locale",
     "icon.svg",
     "docs",
     "README.md"
   ],
+  "scripts": {
+    "prepack": "node prepack.mjs"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

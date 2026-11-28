@@ -1,6 +1,6 @@
 - insert:
     - id: dsh-updater
-      name: '@local/dsh-updater'
+      name: 'dsh-update-plugin'
       config:
         autoCheck: true
         intervalHours: 6

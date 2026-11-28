@@ -33,11 +33,19 @@
 
 ### 安装
 
+从 npm 安装（包名 `dsh-update-plugin`，包内自带更新引擎副本）：
+
+```powershell
+dsh plugin --profile web add dsh-update-plugin
+```
+
+或者从本仓库安装：
+
 1. 打开 DSH → 侧栏 **Plugins** → **Add plugin**
 2. 选择本仓库的 `plugin/` 目录
 3. 装好后在输入框输入 `/update` 验证
 
-插件以 `link:` 方式装进 profile，仓库里改了代码后重新加载插件即可生效。
+从仓库安装时插件以 `link:` 方式装进 profile，仓库里改了代码后重新加载插件即可生效。
 
 ### 命令
 
@@ -412,7 +420,8 @@ Linux（crontab，每天 12:00）：
 ## 更新日志
 
 - **插件 0.1.1**：`/update apply --no-quit` 现在既不自动退出、也不自动重启 dsh——worker 升级完
-  只写状态与日志，由你自己打开 dsh（之前仍会按 `autoRelaunch` 自动重启）。
+  只写状态与日志，由你自己打开 dsh（之前仍会按 `autoRelaunch` 自动重启）。同时发布到 npm，
+  包名 `dsh-update-plugin`，`prepack` 会把 `Update-Dsh.ps1` 复制进包内 `scripts/`。
 - **插件 0.1.0**：新增 DSH 插件 `plugin/`，在 DSH 内用 `/update` 检查与升级——定时检查与缓存、
   `/update apply` 在退出 DSH 后由计划任务托管升级并自动重启、`/update status` 查看结果、
   `/update rollback` 回滚插件。
