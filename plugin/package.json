@@ -1,6 +1,6 @@
 {
   "name": "dsh-update-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "DSH 插件：在 DSH 内用 /update 检查并升级 dsh 本体与 profile 插件（Windows，计划任务托管，升级后自动退出与重启）",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "worker.js",
     "scheduler.js",
     "output.js",
+    "types.js",
     "cordis.patch.yml",
     "scripts",
     "locale",
@@ -36,7 +37,8 @@
     "README.md"
   ],
   "scripts": {
-    "prepack": "node prepack.mjs"
+    "prepack": "node prepack.mjs",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -46,5 +48,10 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.19.0",
+    "@types/node": "^24.19.4",
+    "typescript": "^5.9.3"
   }
 }

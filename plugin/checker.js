@@ -11,6 +11,11 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
+/** @typedef {import('./types.js').CheckState} CheckState */
+/** @typedef {import('./types.js').CoreVersion} CoreVersion */
+/** @typedef {import('./types.js').PackageVersion} PackageVersion */
+/** @typedef {import('./types.js').ProfileContext} ProfileContext */
+
 const execFileAsync = promisify(execFile)
 const WINDOWS = process.platform === 'win32'
 
@@ -36,17 +41,28 @@ export const CHECK_CACHE_MS = 10 * 60_000
 /** registry 请求超时。 */
 const FETCH_TIMEOUT_MS = 15_000
 
-/** 读 JSON 文件，容忍 BOM、缺失与损坏内容；失败返回 undefined。 */
+/**
+ * 读 JSON 文件，容忍 BOM、缺失与损坏内容；失败返回 undefined。
+ * 需要具体形状时由调用方用 JSDoc 的 `@type` 收窄。
+ * @template T
+ * @param {string} file
+ * @returns {Promise<T | undefined>}
+ */
 export async function readJson(file) {
   try {
     const text = (await readFile(file, 'utf8')).replace(/^\uFEFF/, '')
-    return JSON.parse(text)
+    return /** @type {T} */ (JSON.parse(text))
   } catch {
     return undefined
   }
 }
 
-/** 原子写 JSON：先写临时文件再 rename，避免读到半个文件。 */
+/**
+ * 原子写 JSON：先写临时文件再 rename，避免读到半个文件。
+ * @param {string} file
+ * @param {unknown} value
+ * @returns {Promise<void>}
+ */
 export async function writeJsonAtomic(file, value) {
   await mkdir(dirname(file), { recursive: true })
   const temporary = `${file}.${process.pid}.tmp`
@@ -54,23 +70,40 @@ export async function writeJsonAtomic(file, value) {
   await rename(temporary, file)
 }
 
-/** 解析 dsh home（与引擎保持同一套规则）。 */
+/**
+ * 解析 dsh home（与引擎保持同一套规则）。
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
 export function resolveDshHome(env = process.env) {
   const configured = env.DSH_HOME?.trim()
   return configured ? configured : join(homedir(), '.dsh')
 }
 
-/** 轻量检查状态文件的绝对路径。 */
+/**
+ * 轻量检查状态文件的绝对路径。
+ * @param {string} home
+ * @returns {string}
+ */
 export function checkStateFile(home) {
   return join(home, '.dsh-update-backups', 'latest-check.json')
 }
 
-/** 读取上次检查结果；不存在或损坏时返回 undefined。 */
+/**
+ * 读取上次检查结果；不存在或损坏时返回 undefined。
+ * @param {string} home
+ * @returns {Promise<CheckState | undefined>}
+ */
 export async function readCheckState(home) {
   return readJson(checkStateFile(home))
 }
 
-/** 判断状态是否仍然新鲜（无错误且未过期）。 */
+/**
+ * 判断状态是否仍然新鲜（无错误且未过期）。
+ * @param {CheckState | undefined} state
+ * @param {number} [now]
+ * @returns {boolean}
+ */
 export function isFresh(state, now = Date.now()) {
   if (!state || state.error) return false
   const checkedAt = Date.parse(state.checkedAt ?? '')
@@ -78,6 +111,7 @@ export function isFresh(state, now = Date.now()) {
   return now - checkedAt < CHECK_CACHE_MS
 }
 
+/** @type {Promise<string> | undefined} */
 let registryPromise
 
 /** 读取 npm registry（进程内缓存一次）。 */
@@ -95,12 +129,26 @@ export function resolveRegistry() {
   return registryPromise
 }
 
-/** scoped 包名需要把斜杠编码，才能拼进 registry 路径。 */
+/**
+ * registry 的 abbreviated packument（只关心 dist-tags.latest）。
+ * @typedef {{ 'dist-tags'?: { latest?: string } }} Packument
+ */
+
+/**
+ * scoped 包名需要把斜杠编码，才能拼进 registry 路径。
+ * @param {string} name
+ * @returns {string}
+ */
 function encodePackageName(name) {
   return name.startsWith('@') ? name.replace('/', '%2f') : name
 }
 
-/** 直接读 registry 的 abbreviated packument，取 dist-tags.latest。 */
+/**
+ * 直接读 registry 的 abbreviated packument，取 dist-tags.latest。
+ * @param {string} name
+ * @param {string} registry
+ * @returns {Promise<string>}
+ */
 export async function fetchLatest(name, registry) {
   const url = `${registry.replace(/\/+$/, '')}/${encodePackageName(name)}`
   const response = await fetch(url, {
@@ -108,13 +156,17 @@ export async function fetchLatest(name, registry) {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
   if (!response.ok) throw new Error(`registry HTTP ${response.status}`)
-  const document = await response.json()
+  const document = /** @type {Packument | null} */ (await response.json())
   const latest = document?.['dist-tags']?.latest
   if (typeof latest !== 'string' || latest === '') throw new Error('registry 未返回 dist-tags.latest')
   return latest
 }
 
-/** 回退路径：交给 npm 自己处理配置与凭据。 */
+/**
+ * 回退路径：交给 npm 自己处理配置与凭据。
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
 export async function npmViewLatest(name) {
   const { stdout } = await runNpm(['view', name, 'version', '--no-color'])
   const lines = stdout.trim().split(/\r?\n/).filter(Boolean)
@@ -123,7 +175,12 @@ export async function npmViewLatest(name) {
   return version
 }
 
-/** 先 registry，再 npm view；两条都失败返回 undefined。 */
+/**
+ * 先 registry，再 npm view；两条都失败返回 undefined。
+ * @param {string} name
+ * @param {string} registry
+ * @returns {Promise<string | undefined>}
+ */
 async function latestOf(name, registry) {
   try {
     return await fetchLatest(name, registry)
@@ -140,18 +197,32 @@ async function latestOf(name, registry) {
 const LOCAL_SPEC = /^(link:|file:|workspace:|git\+|github:|portal:)/
 
 /**
+ * 已安装版本。
+ * @typedef {object} Installed
+ * @property {CoreVersion} core
+ * @property {{ name: string, plugins: PackageVersion[] }} profile
+ */
+
+/**
  * 读取已安装版本：本体取安装锚点 package.json，插件取 profile 的 node_modules。
  * dependencies 里的 `^1.84.2` 是范围不是实际版本，只作为读不到 node_modules 时的兜底。
+ * @param {ProfileContext} profileContext
+ * @returns {Promise<Installed>}
  */
 export async function readInstalled(profileContext) {
-  const anchor = await readJson(profileContext.installAnchor)
-  const profilePackage = await readJson(join(profileContext.dir, 'package.json'))
+  const anchor = /** @type {{ version?: string } | undefined} */ (await readJson(profileContext.installAnchor))
+  const profilePackage = /** @type {{ dependencies?: Record<string, string> } | undefined} */ (
+    await readJson(join(profileContext.dir, 'package.json'))
+  )
   const declared = profilePackage?.dependencies ?? {}
+  /** @type {PackageVersion[]} */
   const plugins = []
   for (const name of Object.keys(declared)) {
     const spec = String(declared[name] ?? '')
     if (LOCAL_SPEC.test(spec) || name.startsWith('@local/')) continue
-    const installed = await readJson(join(profileContext.dir, 'node_modules', ...name.split('/'), 'package.json'))
+    const installed = /** @type {{ version?: string } | undefined} */ (
+      await readJson(join(profileContext.dir, 'node_modules', ...name.split('/'), 'package.json'))
+    )
     const fallback = spec.replace(/^[\^~>=<\s]+/, '')
     plugins.push({ pkg: name, current: installed?.version ?? (fallback || undefined) })
   }
@@ -163,7 +234,8 @@ export async function readInstalled(profileContext) {
 
 /**
  * 跑一次轻量检查。
- * @returns 写入状态文件的对象：{ schemaVersion, checkedAt, core, profiles, updateAvailable, error }
+ * @param {{ profileContext: ProfileContext, registry?: string, now?: number }} options
+ * @returns {Promise<CheckState>}
  */
 export async function runCheck({ profileContext, registry, now = Date.now() }) {
   const installed = await readInstalled(profileContext)

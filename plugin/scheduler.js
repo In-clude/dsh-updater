@@ -23,7 +23,11 @@ export function assertSupportedPlatform() {
   }
 }
 
-/** 调用 schtasks。 */
+/**
+ * 调用 schtasks。
+ * @param {string[]} args
+ * @returns {Promise<string>}
+ */
 async function schtasks(args) {
   const { stdout, stderr } = await execFileAsync('schtasks.exe', args, {
     timeout: SCHTASKS_TIMEOUT_MS,
@@ -32,12 +36,20 @@ async function schtasks(args) {
   return `${stdout ?? ''}${stderr ?? ''}`
 }
 
-/** 拼出计划任务要执行的命令行（各段都带引号，路径含空格也安全）。 */
+/**
+ * 拼出计划任务要执行的命令行（各段都带引号，路径含空格也安全）。
+ * @param {{ nodeExe: string, workerScript: string, jobFile: string }} options
+ * @returns {string}
+ */
 export function buildCommandLine({ nodeExe, workerScript, jobFile }) {
   return [`"${nodeExe}"`, `"${workerScript}"`, '--job', `"${jobFile}"`].join(' ')
 }
 
-/** 注册并立即启动计划任务。 */
+/**
+ * 注册并立即启动计划任务。
+ * @param {{ taskName: string, commandLine: string }} options
+ * @returns {Promise<void>}
+ */
 export async function startTask({ taskName, commandLine }) {
   // 触发时间只是占位：任务由 /Run 立即执行，worker 启动后自己注销。
   const time = new Date(Date.now() + 5 * 60_000)
@@ -46,7 +58,11 @@ export async function startTask({ taskName, commandLine }) {
   await schtasks(['/Run', '/TN', taskName])
 }
 
-/** 删除计划任务（不存在时静默）。 */
+/**
+ * 删除计划任务（不存在时静默）。
+ * @param {string} taskName
+ * @returns {Promise<void>}
+ */
 export async function deleteTask(taskName) {
   try {
     await schtasks(['/Delete', '/TN', taskName, '/F'])
@@ -55,7 +71,11 @@ export async function deleteTask(taskName) {
   }
 }
 
-/** 查询任务是否存在。 */
+/**
+ * 查询任务是否存在。
+ * @param {string} taskName
+ * @returns {Promise<boolean>}
+ */
 export async function taskExists(taskName) {
   try {
     await schtasks(['/Query', '/TN', taskName, '/FO', 'LIST'])
@@ -65,13 +85,17 @@ export async function taskExists(taskName) {
   }
 }
 
-/** 任务最近一次运行结果（排障用）。 */
+/**
+ * 任务最近一次运行结果（排障用）。
+ * @param {string} taskName
+ * @returns {Promise<string>}
+ */
 export async function taskLastResult(taskName) {
   try {
     const text = await schtasks(['/Query', '/TN', taskName, '/V', '/FO', 'LIST'])
     const line = text.split(/\r?\n/).find(entry => /Last Result|上次运行结果/i.test(entry))
     return line?.trim() ?? ''
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     return String(error?.message ?? error)
   }
 }

@@ -25,6 +25,7 @@
 | `plugin/index.js` | DSH 插件 Host 侧：命令、定时检查、排 worker | 运行在 dsh 进程内 |
 | `plugin/worker.js` | 进程外 worker：等 dsh 退出 → 跑引擎 → 重启 | 由计划任务拉起 |
 | `plugin/checker.js`、`scheduler.js`、`output.js` | 版本查询、schtasks 封装、子进程输出解码 | 可被两边复用 |
+| `plugin/types.js`、`plugin/tsconfig.json` | 共享 JSDoc 类型（job / 状态 / 检查结果）与 `tsc` 校验配置 | `types.js` 只声明类型、运行时不被加载；改磁盘 JSON 字段时两边一起改 |
 | `skills/upgrade-dsh/` | agent 编排用的 skill 与 PS 脚本 | 与 `plugin/` 有功能重叠，改动时注意两边一致性 |
 
 ## 硬性规则
@@ -51,7 +52,8 @@ if ($errors) { $errors | ForEach-Object Message }
 # bash：语法（bash 可能不在 PATH，Git for Windows 下用绝对路径）
 & 'C:\Program Files\Git\bin\bash.exe' -n update-dsh.sh
 
-# 插件 JS
+# 插件 JS：类型校验（JSDoc + checkJs；首次先 `cd plugin; npm install`）+ 语法
+npm --prefix plugin run typecheck
 node --check plugin/index.js; node --check plugin/worker.js
 node --check plugin/checker.js; node --check plugin/scheduler.js
 ```

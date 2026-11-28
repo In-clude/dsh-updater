@@ -26,10 +26,17 @@ dsh plugin --profile web add dsh-update-plugin
 | `worker.js` | 计划任务（进程外） | 等 dsh 退出、跑引擎、重启 dsh |
 | `scheduler.js` | dsh 进程内 | schtasks 注册/启动/删除 |
 | `output.js` | 两边 | 子进程输出解码（Windows 下 PowerShell 按 GBK 输出） |
+| `types.js` | 不加载 | 共享 JSDoc 类型：job 描述、升级状态、检查结果 |
 
 ## 开发
 
 ```powershell
+# 依赖（typescript + @types/node；只需一次）
+npm install
+
+# 类型校验：JSDoc + checkJs，只报错、不产出文件
+npm run typecheck
+
 # 语法检查
 node --check index.js; node --check checker.js; node --check worker.js; node --check scheduler.js
 

@@ -22,6 +22,25 @@ import {
 import { assertSupportedPlatform, buildCommandLine, deleteTask, startTask } from './scheduler.js'
 import { decodeOutput, PWSH_ARGUMENTS, buildPwshCommand } from './output.js'
 
+/** @typedef {import('./types.js').CheckState} CheckState */
+/** @typedef {import('./types.js').CommandInvocation} CommandInvocation */
+/** @typedef {import('./types.js').CommandResult} CommandResult */
+/** @typedef {import('./types.js').CommandsService} CommandsService */
+/** @typedef {import('./types.js').Job} Job */
+/** @typedef {import('./types.js').PluginConfig} PluginConfig */
+/** @typedef {import('./types.js').PluginContext} PluginContext */
+/** @typedef {import('./types.js').ProfileContext} ProfileContext */
+/** @typedef {import('./types.js').UpgradeStatus} UpgradeStatus */
+
+/**
+ * 完整预览的结果。
+ * @typedef {object} PreviewResult
+ * @property {boolean} ok
+ * @property {string} output
+ * @property {boolean} hasUpdates
+ * @property {string} [error]
+ */
+
 const execFileAsync = promisify(execFile)
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url))
 
@@ -38,6 +57,7 @@ const TICK_MS = 60_000
 /** 失败退避上限。 */
 const MAX_BACKOFF_MS = 12 * 3600_000
 
+/** @type {typeof import('@deepseek-ai/schemastery').default | undefined} */
 let z
 try {
   ({ default: z } = await import('@deepseek-ai/schemastery'))
@@ -54,7 +74,7 @@ export const Config = z
     intervalHours: z.number().min(1).max(168).default(6).step(1).volatile(),
     autoQuit: z.boolean().default(true).volatile(),
     quitDelaySeconds: z.number().min(0).max(60).default(5).step(1).volatile(),
-    scope: z.enum(['All', 'Core', 'Plugins']).default('All').volatile(),
+    scope: z.union(['All', 'Core', 'Plugins']).default('All').volatile(),
     profiles: z.array(z.string()).default([]).volatile(),
     autoRelaunch: z.boolean().default(true).volatile(),
     relaunchArgs: z.array(z.string()).default([]).volatile(),
@@ -64,32 +84,57 @@ export const Config = z
   })
   : undefined
 
-/** 读取配置值：volatile 字段是 `.get()` 包装，schema 不可用时是原始值。 */
+/**
+ * 读取配置值：volatile 字段是 `.get()` 包装，schema 不可用时是原始值。
+ * @template T
+ * @param {T | { get(): T } | undefined} value
+ * @param {T} fallback
+ * @returns {T}
+ */
 function read(value, fallback) {
   if (value === undefined) return fallback
-  if (typeof value?.get === 'function') return value.get()
-  return value
+  const holder = /** @type {{ get?: () => T }} */ (value)
+  if (value !== null && typeof holder.get === 'function') return holder.get()
+  return /** @type {T} */ (value)
 }
 
-/** 渲染 `YYYY-MM-DD HH:mm`（本地时区）。 */
+/**
+ * 渲染 `YYYY-MM-DD HH:mm`（本地时区）。
+ * @param {string | undefined} iso
+ * @returns {string}
+ */
 function formatTime(iso) {
   const date = new Date(iso ?? '')
   if (Number.isNaN(date.getTime())) return '未知时间'
+  /** @param {number} n */
   const pad = (n) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** 时间戳目录名：YYYYMMDD-HHmmss。 */
+/**
+ * 时间戳目录名：YYYYMMDD-HHmmss。
+ * @param {Date} [date]
+ * @returns {string}
+ */
 function stamp(date = new Date()) {
+  /** @param {number} n */
   const pad = (n) => String(n).padStart(2, '0')
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
+/**
+ * @param {{ current?: string, latest?: string } | undefined} item
+ * @returns {boolean}
+ */
 function isOutdated(item) {
   return Boolean(item?.latest && item.latest !== item.current)
 }
 
-/** 把检查结果渲染成文本。 */
+/**
+ * 把检查结果渲染成文本。
+ * @param {CheckState | undefined} state
+ * @returns {string}
+ */
 function renderPlan(state) {
   if (!state) return '还没有检查结果。'
   if (state.error) return `检查失败：${state.error}\n稍后会自动重试（已按失败次数退避）。`
@@ -122,7 +167,11 @@ function renderPlan(state) {
   return lines.join('\n')
 }
 
-/** 找升级引擎：配置 > 包内 scripts > 仓库根（本插件与引擎同仓时）。 */
+/**
+ * 找升级引擎：配置 > 包内 scripts > 仓库根（本插件与引擎同仓时）。
+ * @param {PluginConfig | undefined} config
+ * @returns {string | undefined}
+ */
 function resolveUpdaterScript(config) {
   const configured = String(read(config?.updaterRoot, '') ?? '').trim()
   if (configured) {
@@ -135,7 +184,11 @@ function resolveUpdaterScript(config) {
   return existsSync(sibling) ? sibling : undefined
 }
 
-/** 从引擎 dry-run 输出里截出「更新计划」段。 */
+/**
+ * 从引擎 dry-run 输出里截出「更新计划」段。
+ * @param {string | undefined} output
+ * @returns {string}
+ */
 function extractPlan(output) {
   const lines = String(output ?? '').split(/\r?\n/)
   const start = lines.findIndex(line => line.includes('== 更新计划'))
@@ -149,14 +202,20 @@ function extractPlan(output) {
   return plan.join('\n')
 }
 
+/**
+ * Cordis 插件入口。
+ * @param {PluginContext} ctx
+ * @param {PluginConfig} [config]
+ */
 export function apply(ctx, config) {
   const home = resolveDshHome()
   const backupRoot = join(home, BACKUP_ROOT)
   const stateFile = checkStateFile(home)
   const upgradeStatusFile = join(backupRoot, 'logs', 'auto-update-latest.json')
   const logsDir = join(backupRoot, 'logs')
-  const commands = ctx.get('commands')
+  const commands = /** @type {CommandsService | undefined} */ (ctx.get('commands'))
 
+  /** @type {CheckState | undefined} */
   let state
   let nextAt = Date.now() + FIRST_DELAY_MS
   let running = false
@@ -165,13 +224,18 @@ export function apply(ctx, config) {
   const autoCheckEnabled = () => read(config?.autoCheck, true)
   const intervalMs = () => Math.max(1, Number(read(config?.intervalHours, 6)) || 6) * 3600_000
 
+  /** @returns {Promise<CheckState | undefined>} */
   async function hydrate() {
     if (state !== undefined) return state
     state = await readCheckState(home)
     return state
   }
 
-  /** 轻量检查；`force` 忽略缓存。 */
+  /**
+   * 轻量检查；`force` 忽略缓存。
+   * @param {{ force?: boolean }} [options]
+   * @returns {Promise<CheckState | undefined>}
+   */
   async function check({ force = false } = {}) {
     if (running) return state
     await hydrate()
@@ -179,7 +243,7 @@ export function apply(ctx, config) {
 
     running = true
     try {
-      const profileContext = ctx.get('profileContext')
+      const profileContext = /** @type {ProfileContext | undefined} */ (ctx.get('profileContext'))
       if (!profileContext?.dir || !profileContext?.installAnchor) {
         throw new Error('当前会话没有 profile 上下文，无法读取已安装版本')
       }
@@ -188,7 +252,7 @@ export function apply(ctx, config) {
       nextAt = Date.now() + intervalMs()
       await writeJsonAtomic(stateFile, { ...state, failures, nextCheckAt: new Date(nextAt).toISOString() })
       return state
-    } catch (error) {
+    } catch (/** @type {any} */ error) {
       failures += 1
       nextAt = Date.now() + Math.min(3600_000 * 2 ** failures, MAX_BACKOFF_MS)
       state = {
@@ -206,7 +270,12 @@ export function apply(ctx, config) {
     }
   }
 
-  /** 跑完整预览（权威计划，含兼容性判断）。只读。 */
+  /**
+   * 跑完整预览（权威计划，含兼容性判断）。只读。
+   * @param {string} engine
+   * @param {string} scope
+   * @returns {Promise<PreviewResult>}
+   */
   async function runPreview(engine, scope) {
     const scriptArgs = ['-DryRun', '-Yes', '-Scope', scope]
     const profiles = read(config?.profiles, []) ?? []
@@ -221,7 +290,7 @@ export function apply(ctx, config) {
       })
       const output = `${decodeOutput(stdout ?? Buffer.alloc(0))}\n${decodeOutput(stderr ?? Buffer.alloc(0))}`
       return { ok: true, output, hasUpdates: /\[PLAN\]/.test(output) }
-    } catch (error) {
+    } catch (/** @type {any} */ error) {
       const raw = Buffer.concat([error?.stdout ?? Buffer.alloc(0), error?.stderr ?? Buffer.alloc(0)])
       return {
         ok: false,
@@ -232,18 +301,23 @@ export function apply(ctx, config) {
     }
   }
 
-  /** 组装 worker 的 job 描述；`relaunch` 为 false 时 worker 升级完不会重启 dsh。 */
+  /**
+   * 组装 worker 的 job 描述；`relaunch` 为 false 时 worker 升级完不会重启 dsh。
+   * @param {{ engine: string, rollback: boolean, rollbackId?: string, relaunch: boolean }} options
+   * @returns {Promise<Job>}
+   */
   async function createJob({ engine, rollback, rollbackId, relaunch }) {
     const when = stamp()
     const taskName = `DSH-AutoUpdate-${when}`
     const jobFile = join(logsDir, `auto-update-${when}.job.json`)
     const scope = read(config?.scope, 'All')
     const profiles = read(config?.profiles, []) ?? []
-    const profileContext = ctx.get('profileContext')
+    const profileContext = /** @type {ProfileContext | undefined} */ (ctx.get('profileContext'))
     const updaterArgs = rollback
       ? ['-Rollback', '-Yes', ...(rollbackId ? ['-RollbackId', rollbackId] : [])]
       : ['-Scope', scope, '-Yes', ...(profiles.length > 0 ? ['-Profile', profiles.join(',')] : [])]
 
+    /** @type {Job} */
     const job = {
       taskName,
       jobFile,
@@ -269,22 +343,30 @@ export function apply(ctx, config) {
     return job
   }
 
-  /** 等 worker 写出 waiting 状态。 */
+  /**
+   * 等 worker 写出 waiting 状态。
+   * @param {Job} job
+   * @returns {Promise<boolean>}
+   */
   async function waitForWorker(job) {
     const deadline = Date.now() + START_CONFIRM_MS
     while (Date.now() < deadline) {
-      const current = await readJson(upgradeStatusFile)
+      const current = /** @type {UpgradeStatus | undefined} */ (await readJson(upgradeStatusFile))
       if (current?.jobFile === job.jobFile && current?.status === 'waiting') return true
       await new Promise(resolve => setTimeout(resolve, 500))
     }
     return false
   }
 
-  /** 排一次升级（update 或 rollback），并请求 dsh 优雅退出。 */
+  /**
+   * 排一次升级（update 或 rollback），并请求 dsh 优雅退出。
+   * @param {{ rollback: boolean, rollbackId?: string, quit?: boolean }} options
+   * @returns {Promise<CommandResult>}
+   */
   async function enqueue({ rollback, rollbackId, quit }) {
     assertSupportedPlatform()
 
-    const existing = await readJson(upgradeStatusFile)
+    const existing = /** @type {UpgradeStatus | undefined} */ (await readJson(upgradeStatusFile))
     if (existing?.status === 'waiting' || existing?.status === 'running') {
       return {
         kind: 'error',
@@ -325,7 +407,7 @@ export function apply(ctx, config) {
 
     try {
       await startTask({ taskName: job.taskName, commandLine })
-    } catch (error) {
+    } catch (/** @type {any} */ error) {
       await deleteTask(job.taskName)
       return { kind: 'error', text: `注册计划任务失败：${String(error?.message ?? error)}` }
     }
@@ -359,10 +441,13 @@ export function apply(ctx, config) {
     return { kind: 'success', text: lines.filter(Boolean).join('\n') }
   }
 
-  /** `/update status`：合并「有无新版本」与「上次升级结果」。 */
+  /**
+   * `/update status`：合并「有无新版本」与「上次升级结果」。
+   * @returns {Promise<CommandResult>}
+   */
   async function statusText() {
     const current = await hydrate()
-    const upgrade = await readJson(upgradeStatusFile)
+    const upgrade = /** @type {UpgradeStatus | undefined} */ (await readJson(upgradeStatusFile))
     const lines = [renderPlan(current)]
     if (current?.nextCheckAt) lines.push(`下次自动检查：${formatTime(current.nextCheckAt)}`)
     if (current?.failures) lines.push(`连续失败：${current.failures} 次`)
@@ -370,6 +455,7 @@ export function apply(ctx, config) {
     if (!upgrade) {
       lines.push('', '上次升级：无记录')
     } else {
+      /** @type {Record<string, string>} */
       const labels = { waiting: '等待 DSH 退出', running: '正在执行', finished: '成功', failed: '失败', timeout: '等待超时' }
       lines.push('', `上次升级：${labels[upgrade.status] ?? upgrade.status} · ${formatTime(upgrade.updatedAt)}`)
       if (upgrade.dshBefore || upgrade.dshAfter) lines.push(`  版本：${upgrade.dshBefore || '?'} → ${upgrade.dshAfter || '?'}`)
@@ -398,7 +484,7 @@ export function apply(ctx, config) {
       name: 'update',
       description: '检查并执行 dsh 更新：本体与 profile 插件，升级后自动重启',
       input: { hint: 'apply | status | rollback | --refresh' },
-      handler: async (invocation) => {
+      handler: async (/** @type {CommandInvocation} */ invocation) => {
         const raw = String(invocation?.rawInput ?? '').trim()
         const parts = raw.split(/\s+/).filter(Boolean)
         const sub = parts[0] ?? ''
@@ -413,7 +499,7 @@ export function apply(ctx, config) {
               : { kind: 'success', text: renderPlan(current) }
           }
           return { kind: 'error', text: `未知参数 ${JSON.stringify(sub)}。可用：/update、/update --refresh、/update status、/update apply、/update rollback。` }
-        } catch (error) {
+        } catch (/** @type {any} */ error) {
           return { kind: 'error', text: `执行失败：${String(error?.message ?? error)}` }
         }
       },

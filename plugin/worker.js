@@ -16,9 +16,17 @@ import { dirname, join } from 'node:path'
 import { readJson, writeJsonAtomic } from './checker.js'
 import { PWSH_ARGUMENTS, buildPwshCommand, decodeOutput } from './output.js'
 
+/** @typedef {import('./types.js').Job} Job */
+/** @typedef {import('./types.js').UpgradeStatus} UpgradeStatus */
+
 const POLL_MS = 2_000
 const BACKUP_DIR = /^\d{8}-\d{6}$/
 
+/**
+ * 读 `--name value` 形式的命令行参数。
+ * @param {string} name
+ * @returns {string | undefined}
+ */
 function argValue(name) {
   const argv = process.argv.slice(2)
   const index = argv.indexOf(name)
@@ -31,9 +39,11 @@ if (!jobFile) {
   process.exit(2)
 }
 
+/** @type {Job} */
 const job = JSON.parse(await readFile(jobFile, 'utf8'))
 const startedAt = new Date().toISOString()
 const logPath = job.logPath
+/** @type {UpgradeStatus} */
 let status = {
   status: 'waiting',
   mode: job.mode ?? 'update',
@@ -52,7 +62,10 @@ let status = {
 
 await mkdir(dirname(logPath), { recursive: true }).catch(() => {})
 
-/** 追加到日志文件（UTF-8，可含中文）。 */
+/**
+ * 追加到日志文件（UTF-8，可含中文）。
+ * @param {string} message
+ */
 function log(message) {
   try {
     appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, 'utf8')
@@ -61,7 +74,10 @@ function log(message) {
   }
 }
 
-/** 同时写到控制台；只能是 ASCII，否则 GBK 控制台窗口里会变乱码。 */
+/**
+ * 同时写到控制台；只能是 ASCII，否则 GBK 控制台窗口里会变乱码。
+ * @param {string} message
+ */
 function progress(message) {
   log(message)
   try {
@@ -69,10 +85,14 @@ function progress(message) {
   } catch {}
 }
 
-/** 原子写状态文件，供 /update status 与设置页读取。 */
+/**
+ * 原子写状态文件，供 /update status 与设置页读取。
+ * @param {Partial<UpgradeStatus>} patch
+ * @returns {Promise<void>}
+ */
 async function writeStatus(patch) {
   status = { ...status, ...patch, updatedAt: new Date().toISOString() }
-  await writeJsonAtomic(job.statusPath, status).catch(error => log(`写状态失败：${String(error)}`))
+  await writeJsonAtomic(job.statusPath, status).catch(/** @type {any} */ error => log(`写状态失败：${String(error)}`))
 }
 
 /** 注销自身计划任务；worker 已经在跑，任务留着只会变成残留。 */
@@ -81,12 +101,18 @@ async function deleteSelfTask() {
   try {
     await exec('schtasks.exe', ['/Delete', '/TN', job.taskName, '/F'])
     log(`已删除计划任务 ${job.taskName}（worker 已独立运行）`)
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     log(`删除计划任务失败（可忽略）：${String(error?.message ?? error)}`)
   }
 }
 
-/** 执行一个子进程并等待结束。 */
+/**
+ * 执行一个子进程并等待结束。
+ * @param {string} file
+ * @param {string[]} args
+ * @param {import('node:child_process').SpawnOptions} [options]
+ * @returns {Promise<number>}
+ */
 function exec(file, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { windowsHide: true, ...options })
@@ -95,7 +121,12 @@ function exec(file, args, options = {}) {
   })
 }
 
-/** 执行一个子进程并收集 stdout。 */
+/**
+ * 执行一个子进程并收集 stdout。
+ * @param {string} file
+ * @param {string[]} args
+ * @returns {Promise<string>}
+ */
 function capture(file, args) {
   return new Promise(resolve => {
     const child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
@@ -130,6 +161,7 @@ function runUpdater() {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    /** @param {Buffer} chunk */
     const pipe = chunk => {
       try {
         appendFileSync(logPath, decodeOutput(chunk, { stream: true }), 'utf8')
@@ -137,7 +169,7 @@ function runUpdater() {
     }
     child.stdout.on('data', pipe)
     child.stderr.on('data', pipe)
-    child.on('error', error => {
+    child.on('error', (/** @type {any} */ error) => {
       log(`启动升级引擎失败：${String(error?.message ?? error)}`)
       resolve(127)
     })
@@ -145,19 +177,32 @@ function runUpdater() {
   })
 }
 
-/** 进程是否仍存活（EPERM 表示存在但无权限探测）。 */
+/**
+ * 进程是否仍存活（EPERM 表示存在但无权限探测）。
+ * @param {number} pid
+ * @returns {boolean}
+ */
 function isAlive(pid) {
   try {
     process.kill(pid, 0)
     return true
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     return error?.code === 'EPERM'
   }
 }
 
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-/** 等 dsh 进程退出；超时返回 false。 */
+/**
+ * 等 dsh 进程退出；超时返回 false。
+ * @param {number} pid
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>}
+ */
 async function waitForExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let last = 0
@@ -172,13 +217,20 @@ async function waitForExit(pid, timeoutMs) {
   return false
 }
 
-/** 升级后 dsh 版本。 */
+/**
+ * 升级后 dsh 版本。
+ * @returns {Promise<string>}
+ */
 async function dshVersion() {
   const out = await capture('cmd.exe', ['/c', 'dsh', '--version'])
   return out.trim().split(/\r?\n/).pop() ?? ''
 }
 
-/** 最近一次备份目录（引擎生成的 YYYYMMDD-HHmmss 目录）。 */
+/**
+ * 最近一次备份目录（引擎生成的 YYYYMMDD-HHmmss 目录）。
+ * @param {number} sinceMs
+ * @returns {Promise<string>}
+ */
 async function newestBackup(sinceMs) {
   const root = join(job.dshHome ?? '', '.dsh-update-backups')
   try {
@@ -197,7 +249,11 @@ async function newestBackup(sinceMs) {
   }
 }
 
-/** 只保留最近 N 个备份目录（目录名必须是时间戳且位于备份根下）。 */
+/**
+ * 只保留最近 N 个备份目录（目录名必须是时间戳且位于备份根下）。
+ * @param {number} keep
+ * @returns {Promise<void>}
+ */
 async function pruneBackups(keep) {
   if (!Number.isFinite(keep) || keep <= 0) return
   const root = join(job.dshHome ?? '', '.dsh-update-backups')
@@ -211,12 +267,15 @@ async function pruneBackups(keep) {
       await rm(join(root, name), { recursive: true, force: true })
       log(`已清理旧备份 ${name}`)
     }
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     log(`清理旧备份失败（可忽略）：${String(error?.message ?? error)}`)
   }
 }
 
-/** 重启 dsh；失败只记日志，不影响状态落盘。 */
+/**
+ * 重启 dsh；失败只记日志，不影响状态落盘。
+ * @returns {Promise<{ relaunched: boolean, relaunchError?: string }>}
+ */
 async function relaunch() {
   const spec = job.relaunch
   if (!spec?.enabled) {
@@ -227,10 +286,10 @@ async function relaunch() {
   progress(`relaunching: ${spec.command} ${(spec.args ?? []).join(' ')}`)
   try {
     const child = spawn('cmd.exe', args, { cwd: spec.cwd || undefined, detached: true, stdio: 'ignore', windowsHide: false })
-    child.on('error', error => log(`重启失败：${String(error?.message ?? error)}`))
+    child.on('error', (/** @type {any} */ error) => log(`重启失败：${String(error?.message ?? error)}`))
     child.unref()
     return { relaunched: true }
-  } catch (error) {
+  } catch (/** @type {any} */ error) {
     log(`重启失败：${String(error?.message ?? error)}`)
     return { relaunched: false, relaunchError: String(error?.message ?? error) }
   }

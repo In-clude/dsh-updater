@@ -9,12 +9,20 @@
  */
 const decoder = new TextDecoder('utf-8')
 
-/** 拼出 PowerShell 的单引号字符串字面量。 */
+/**
+ * 拼出 PowerShell 的单引号字符串字面量。
+ * @param {unknown} value 任意参数值
+ * @returns {string}
+ */
 function singleQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`
 }
 
-/** 需要加引号的参数（含空白或引号）。 */
+/**
+ * 需要加引号的参数（含空白或引号）。
+ * @param {unknown} value 任意参数值
+ * @returns {string}
+ */
 function quoteArgument(value) {
   const text = String(value)
   return /[\s'"]/.test(text) ? singleQuote(text) : text

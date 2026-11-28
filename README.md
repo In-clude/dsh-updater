@@ -428,6 +428,9 @@ Linux（crontab，每天 12:00）：
 
 ## 更新日志
 
+- **插件 0.1.2**：`plugin/` 接入 `tsc` 类型校验（JSDoc + `checkJs`，`npm --prefix plugin run typecheck`），
+  共享类型集中在 `plugin/types.js`。同时修掉类型校验查出的配置 schema 崩溃——`scope` 原本用的是
+  schemastery 里不存在的 `z.enum`，能加载到 schema 库时会报 `z.enum is not a function`；改用 `z.union`。
 - **插件 0.1.1**：`/update apply --no-quit` 现在既不自动退出、也不自动重启 dsh——worker 升级完
   只写状态与日志，由你自己打开 dsh（之前仍会按 `autoRelaunch` 自动重启）。同时发布到 npm，
   包名 `dsh-update-plugin`，`prepack` 会把 `Update-Dsh.ps1` 复制进包内 `scripts/`。
