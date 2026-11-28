@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-updater",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "dsh 更新检查：轻量比对 dsh 本体与各 profile 插件的可用新版本，结果写入状态文件并在 /update 中展示",

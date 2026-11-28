@@ -2,7 +2,7 @@
 
 DSH 插件（bundle）：检查并执行 dsh 更新。
 
-- `/update` 检查本体与 profile 插件的可用新版本；`/update apply` 退出 dsh 后由计划任务托管升级并自动重启。
+- `/update` 检查本体与 profile 插件的可用新版本；`/update apply` 退出 dsh 后由计划任务托管升级并自动重启（`--no-quit` 只排队，不自动退出、也不自动重启）。
 - 升级引擎复用仓库根的 `Update-Dsh.ps1`（备份 / 兼容性校验 / 回滚都由它负责）。
 - 详细说明见 [docs/DETAIL.md](docs/DETAIL.md)。
 

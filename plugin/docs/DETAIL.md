@@ -6,7 +6,7 @@
 
 - **定时检查**：启动后 20 秒一次，之后按间隔（默认 6 小时）自动比对；结果缓存 10 分钟。
 - **一键升级**：`/update apply` 先跑完整预览（含兼容性判断），确认有更新后把升级交给进程外的 worker；worker 等 dsh 退出后执行引擎、重启 dsh。
-- **失败可见**：worker 无论成功失败都会写状态并尝试重启 dsh，`/update status` 给出状态、备份目录与日志路径。
+- **失败可见**：worker 无论成功失败都会写状态并尝试重启 dsh（`--no-quit` 排的任务不重启），`/update status` 给出状态、备份目录与日志路径。
 - **回滚**：`/update rollback [备份ID]` 走同一条 worker 链路执行插件的回滚（不降级本体）。
 - **备份清理**：成功后只保留最近 N 个备份目录（默认 5）。
 
@@ -18,7 +18,7 @@
 | `/update --refresh` | 强制重新检查 |
 | `/update status` | 检查结果 + 上次升级结果/备份/日志 |
 | `/update apply` | 排升级 → 倒计时退出 dsh → worker 升级 → 自动重启 |
-| `/update apply --no-quit` | 只排队，由你自己关闭 dsh |
+| `/update apply --no-quit` | 只排队：不自动退出、也不自动重启 dsh，由你自己关闭和重开 |
 | `/update rollback [id]` | 回滚插件（默认最近一次备份） |
 
 ## 工作方式
@@ -34,7 +34,7 @@ worker（进程外，由计划任务拉起，启动后立即注销自身任务�
   ├─ 等 dsh 进程消失（默认最多 120 分钟）
   ├─ pwsh scripts/Update-Dsh.ps1 -Scope <scope> -Yes（输出全量落日志）
   ├─ 写 auto-update-latest.json（状态/前后版本/退出码/备份目录）
-  └─ 重启 dsh（沿用 profile 与 relaunchArgs）
+  └─ 重启 dsh（沿用 profile 与 relaunchArgs；`--no-quit` 排的任务跳过这一步）
 ```
 
 **为什么必须由计划任务托管**：dsh 在 Windows 上用 kill-on-close 的 Job Object 管理子进程，任何挂在 dsh 进程树下的后台进程都会随 dsh 退出被杀掉；计划任务由 Task Scheduler 服务拉起，与 dsh 无关。

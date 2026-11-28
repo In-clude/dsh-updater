@@ -219,7 +219,10 @@ async function pruneBackups(keep) {
 /** 重启 dsh；失败只记日志，不影响状态落盘。 */
 async function relaunch() {
   const spec = job.relaunch
-  if (!spec?.enabled) return { relaunched: false }
+  if (!spec?.enabled) {
+    log('未启用自动重启（autoRelaunch 关闭或 apply 时用了 --no-quit），跳过重启 dsh')
+    return { relaunched: false }
+  }
   const args = ['/c', 'start', '', spec.command, ...(spec.args ?? [])]
   progress(`relaunching: ${spec.command} ${(spec.args ?? []).join(' ')}`)
   try {

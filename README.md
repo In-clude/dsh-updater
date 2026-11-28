@@ -47,7 +47,7 @@
 | `/update --refresh` | 强制重新检查 |
 | `/update status` | 检查结果 + 上次升级的状态/备份/日志 |
 | `/update apply` | 完整预览 → 排后台 worker → 倒计时退出 DSH → 升级 → 自动重启 |
-| `/update apply --no-quit` | 只排队，由你自己关闭 DSH |
+| `/update apply --no-quit` | 只排队：不自动退出、也不自动重启 DSH，由你自己关闭和重开 |
 | `/update rollback [备份ID]` | 回滚插件（默认最近一次备份，不降级本体） |
 
 ### 配置
@@ -79,7 +79,7 @@ worker → 等 dsh 进程消失 → 运行 Update-Dsh.ps1 -Scope All -Yes → �
 ### 限制
 
 - **仅 Windows**（依赖计划任务）；Linux 请用 `update-dsh.sh`。
-- 升级时 DSH 会退出并自动重启，当前会话中断一次——这是替换运行中文件的物理前提。
+- 升级时 DSH 会退出并自动重启，当前会话中断一次——这是替换运行中文件的物理前提；`/update apply --no-quit` 可关掉这两步自动化，改由你自己关闭和重开。
 - 升级引擎默认取插件上一级的 `Update-Dsh.ps1`；把插件单独拷到别处时，用配置项 `updaterRoot` 指向引擎目录。
 
 ## DSH skill（可选）
@@ -411,6 +411,8 @@ Linux（crontab，每天 12:00）：
 
 ## 更新日志
 
+- **插件 0.1.1**：`/update apply --no-quit` 现在既不自动退出、也不自动重启 dsh——worker 升级完
+  只写状态与日志，由你自己打开 dsh（之前仍会按 `autoRelaunch` 自动重启）。
 - **插件 0.1.0**：新增 DSH 插件 `plugin/`，在 DSH 内用 `/update` 检查与升级——定时检查与缓存、
   `/update apply` 在退出 DSH 后由计划任务托管升级并自动重启、`/update status` 查看结果、
   `/update rollback` 回滚插件。

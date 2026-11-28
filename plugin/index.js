@@ -116,7 +116,7 @@ function renderPlan(state) {
     lines.push('', `所有内容都已是最新（插件 ${pluginCount} 个）。`)
   } else {
     lines.push('', `另有 ${pluginCount - outdated} 个插件已是最新。`)
-    lines.push('执行升级：/update apply（会先关闭 dsh，升级后自动重启）。')
+    lines.push('执行升级：/update apply（会先关闭 dsh，升级后自动重启）；想自己控制开关 dsh 用 /update apply --no-quit。')
   }
   lines.push(`结果缓存 ${Math.round(CHECK_CACHE_MS / 60_000)} 分钟；/update --refresh 强制刷新。`)
   return lines.join('\n')
@@ -232,8 +232,8 @@ export function apply(ctx, config) {
     }
   }
 
-  /** 组装 worker 的 job 描述。 */
-  async function createJob({ engine, rollback, rollbackId }) {
+  /** 组装 worker 的 job 描述；`relaunch` 为 false 时 worker 升级完不会重启 dsh。 */
+  async function createJob({ engine, rollback, rollbackId, relaunch }) {
     const when = stamp()
     const taskName = `DSH-AutoUpdate-${when}`
     const jobFile = join(logsDir, `auto-update-${when}.job.json`)
@@ -259,7 +259,7 @@ export function apply(ctx, config) {
       waitTimeoutMinutes: Number(read(config?.waitTimeoutMinutes, 120)) || 120,
       keepBackups: Number(read(config?.keepBackups, 5)) || 5,
       relaunch: {
-        enabled: Boolean(read(config?.autoRelaunch, true)),
+        enabled: Boolean(relaunch),
         command: 'dsh',
         args: [profileContext?.name ?? 'web', ...(read(config?.relaunchArgs, []) ?? [])],
         cwd: process.cwd(),
@@ -312,7 +312,11 @@ export function apply(ctx, config) {
       plan = extractPlan(preview.output)
     }
 
-    const job = await createJob({ engine, rollback, rollbackId })
+    const autoQuit = quit !== false && Boolean(read(config?.autoQuit, true))
+    const autoRelaunch = quit !== false && Boolean(read(config?.autoRelaunch, true))
+    const delay = Math.max(0, Number(read(config?.quitDelaySeconds, 5)) || 0)
+
+    const job = await createJob({ engine, rollback, rollbackId, relaunch: autoRelaunch })
     const commandLine = buildCommandLine({
       nodeExe: process.execPath,
       workerScript: job.workerScript,
@@ -334,20 +338,23 @@ export function apply(ctx, config) {
       }
     }
 
-    const autoQuit = quit !== false && Boolean(read(config?.autoQuit, true))
-    const delay = Math.max(0, Number(read(config?.quitDelaySeconds, 5)) || 0)
     const appExit = ctx.get('appExit')
     if (autoQuit && appExit) ctx.timeout(() => appExit(0), delay * 1000)
 
     const action = rollback ? '回滚' : '升级'
+    const relaunchText = autoRelaunch
+      ? '完成后自动重启 dsh'
+      : '完成后不会自动重启 dsh，需要时请手动启动'
     const lines = [
       `已排队${action}：${job.taskName}`,
       plan ? `\n更新计划：\n${plan}\n` : '',
       `日志：${job.logPath}`,
       autoQuit && appExit
-        ? `${delay} 秒后自动退出 dsh；worker 会在进程退出后执行${action}，完成后自动重启 dsh。`
-        : `请手动退出 dsh；worker 会在进程退出后执行${action}，完成后自动重启 dsh。`,
-      '退出后这个会话会中断，重开 dsh 即可继续。',
+        ? `${delay} 秒后自动退出 dsh；worker 会在进程退出后执行${action}，${relaunchText}。`
+        : `请手动退出 dsh；worker 会在进程退出后执行${action}，${relaunchText}。`,
+      autoRelaunch
+        ? '退出后这个会话会中断，重开 dsh 即可继续。'
+        : '退出后这个会话会中断；升级完成后请手动打开 dsh。',
     ]
     return { kind: 'success', text: lines.filter(Boolean).join('\n') }
   }
