@@ -25,27 +25,36 @@
 | `check-updates.sh` | Linux | 只预览：等价于 `update-dsh.sh --dry-run` |
 | `skills/upgrade-dsh/` | Windows | 可选的 DSH skill：由 agent 编排「预览 → 退出 DSH 后自动升级 → 重启验证」 |
 | `plugin/` | Windows | DSH 插件：在 DSH 内用 `/update` 检查与升级（定时检查、退出后计划任务托管、自动重启） |
+| `dsh-update-plugin`（npm） | Windows | `plugin/` 的 npm 发布形态，装进 profile 即可用，包内自带更新引擎副本 |
 
 ## DSH 插件（推荐）
 
-`plugin/` 是一个 [DSH](https://github.com/deepseek-ai/deepseek-harness) 插件（bundle）。装进 profile 后，
-输入框里 `/update` 就能检查并升级——**不用开终端，也不用 agent**。
+`plugin/` 是一个 [DSH](https://github.com/deepseek-ai/deepseek-harness) 插件（bundle），已发布到 npm
+（包名 **`dsh-update-plugin`**）。装进 profile 后，输入框里 `/update` 就能检查并升级——**不用开终端，也不用 agent**。
 
 ### 安装
 
-从 npm 安装（包名 `dsh-update-plugin`，包内自带更新引擎副本）：
+**方式 A：从 npm 安装（推荐，不用克隆仓库）**
 
 ```powershell
 dsh plugin --profile web add dsh-update-plugin
 ```
 
-或者从本仓库安装：
+- 换 profile 就把 `--profile web` 改成目标 profile。
+- 锁定版本：`dsh plugin --profile web add dsh-update-plugin@0.1.1`。
+- 升级插件本身：重跑 `dsh plugin --profile web add dsh-update-plugin@latest`（`/update apply` 更新插件时也会顺带更新它）。
+- 卸载：`dsh plugin --profile web remove dsh-update-plugin`。
+
+npm 包里自带更新引擎副本（`scripts/Update-Dsh.ps1`），所以 npm 安装不需要本仓库。
+国内镜像（npmmirror）已同步；发布始终走 `registry.npmjs.org`。
+
+**方式 B：从本仓库安装（改插件代码时用）**
 
 1. 打开 DSH → 侧栏 **Plugins** → **Add plugin**
 2. 选择本仓库的 `plugin/` 目录
 3. 装好后在输入框输入 `/update` 验证
 
-从仓库安装时插件以 `link:` 方式装进 profile，仓库里改了代码后重新加载插件即可生效。
+这种方式插件以 `link:` 装进 profile，仓库里改了代码后重新加载插件即可生效。
 
 ### 命令
 

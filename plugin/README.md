@@ -6,6 +6,17 @@ DSH 插件（bundle）：检查并执行 dsh 更新。发布到 npm 的包名是
 - 升级引擎复用仓库根的 `Update-Dsh.ps1`（备份 / 兼容性校验 / 回滚都由它负责）；发布到 npm 时由 `prepack` 把它复制进包内 `scripts/Update-Dsh.ps1`。
 - 详细说明见 [docs/DETAIL.md](docs/DETAIL.md)。
 
+## 安装
+
+从 npm 安装（包内自带更新引擎副本，不需要本仓库）：
+
+```powershell
+dsh plugin --profile web add dsh-update-plugin
+```
+
+换 profile 改 `--profile`；锁版本用 `dsh-update-plugin@0.1.1`；卸载用
+`dsh plugin --profile web remove dsh-update-plugin`。装好后在输入框输入 `/update` 验证。
+
 ## 模块
 
 | 文件 | 运行位置 | 职责 |
@@ -29,12 +40,7 @@ node --input-type=module -e "import('./checker.js').then(async m => console.log(
 node worker.js --job <job.json>
 ```
 
-安装/更新：用 dsh 的插件管理（Plugins 页或 `plugin_manager` 的 `install_bundle`）指向本目录；
-或从 npm 安装（包名 `dsh-update-plugin`）：
-
-```powershell
-dsh plugin --profile web add dsh-update-plugin
-```
+从本仓库安装：用 dsh 的插件管理（Plugins 页或 `plugin_manager` 的 `install_bundle`）指向本目录。
 
 发布到 npm：
 
