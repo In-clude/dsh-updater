@@ -14,6 +14,25 @@
 > plugins, with dry-run preview, backups, compatibility guards, and one-command rollback.
 > Windows uses PowerShell; Linux uses native bash; the bundled DSH plugin adds `/update` inside the app.
 
+## 前置条件
+
+以下要求对**插件 / skill / 脚本**三种入口都适用：
+
+- dsh 是 **npm 全局安装** 的（`npm i -g @deepseek-ai/dsh`，可用 `dsh --version` 验证）
+- 有 `pnpm`（dsh 的插件管理依赖它；`pnpm --version`）
+- npm registry 可访问（国内可配置 `registry.npmmirror.com` 等镜像）
+
+Windows 额外要求：PowerShell 7（`pwsh`）或 Windows PowerShell 5.1。
+
+插件与 skill 入口额外要求：dsh 以 profile 方式运行（Web / 桌面版默认即是），且为 Windows（计划任务）。
+
+Linux 额外要求：
+
+- `bash` ≥ 4.4（主流发行版默认满足）
+- `node`（dsh 自身依赖；脚本用 node 解析 JSON，不额外依赖 `jq`）
+- `dsh` / `npm` / `pnpm` 在 `PATH` 里
+- `git` 可选：`github:` 依赖的远端检查与 `link:` 依赖的 `git pull` 需要
+
 ## 文件
 
 | 文件 | 平台 | 用途 |
@@ -125,25 +144,6 @@ setx DSH_UPDATER_HOME "D:\tools\dsh-updater"
 ```
 
 > skill 的“退出后自动升级”依赖 Windows 任务计划程序，只支持 Windows；Linux 请直接用 `update-dsh.sh`。
-
-## 前置条件
-
-两种脚本入口都要求：
-
-- dsh 是 **npm 全局安装** 的（`npm i -g @deepseek-ai/dsh`，可用 `dsh --version` 验证）
-- 有 `pnpm`（dsh 的插件管理依赖它；`pnpm --version`）
-- npm registry 可访问（国内可配置 `registry.npmmirror.com` 等镜像）
-
-Windows 额外要求：PowerShell 7（`pwsh`）或 Windows PowerShell 5.1。
-
-插件入口额外要求：dsh 以 profile 方式运行（Web / 桌面版默认即是），且为 Windows（计划任务）。
-
-Linux 额外要求：
-
-- `bash` ≥ 4.4（主流发行版默认满足）
-- `node`（dsh 自身依赖；脚本用 node 解析 JSON，不额外依赖 `jq`）
-- `dsh` / `npm` / `pnpm` 在 `PATH` 里
-- `git` 可选：`github:` 依赖的远端检查与 `link:` 依赖的 `git pull` 需要
 
 ## 脚本用法
 
